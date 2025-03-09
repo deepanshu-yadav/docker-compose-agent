@@ -7,7 +7,12 @@ from langchain_core.prompts import (
     AIMessagePromptTemplate,
     ChatPromptTemplate
 )
+from pydantic import BaseModel, Field
+from typing import Optional, List, Mapping, Any
 
+from langchain.llms.base import LLM
+from typing import Optional, List, Mapping, Any
+from openai import OpenAI
 import uuid
 from datetime import datetime
 import re
@@ -18,11 +23,14 @@ import shutil
 import time
 import asyncio
 
-from prompts import MAIN_PROMPT
+from prompts import MAIN_PROMPT, SHORT_PROMPT
 
 MAIN_WORKSPACE_DIR=os.path.join(os.getcwd(), "workspaces")
+DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
 
 def save_code_to_files(text, main_dir):
+    if type(text) != type(''):
+        return
     # Regular expression to match the pattern <filename> code
     pattern = r'```([^\n]+)\n([\s\S]*?)\n```'
     
@@ -169,7 +177,9 @@ def extract_code(llm_response):
     return match.group(1) if match else None
 
 def escape_braces(text):
-    return text.replace("{", "{{").replace("}", "}}")
+    if type(text) == type(''):
+        return text.replace("{", "{{").replace("}", "}}")
+    return text
 
 # Initialize session states
 if 'chats' not in st.session_state:
@@ -490,7 +500,7 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     selected_model = st.selectbox(
         "Choose Model",
-        ["deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b"],
+        ["deepseek/deepseek-r1:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b"],
         index=0
     )
     
@@ -539,36 +549,68 @@ st.title("AI Devops Agent")
 st.caption("🚀 Your AI Devops expert with deploying superpowers.")
 
 # Initialize LLM engine
-llm_engine = ChatOllama(
-    model=selected_model,
-    base_url="http://localhost:11434",
-    temperature=0
-)
+if selected_model == "deepseek/deepseek-r1:free":
+    # Set up the OpenAI client with the custom API endpoint
+    
+    llm_engine = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=DEEPSEEK_FREE_KEY,
+    )
+else:
+    llm_engine = ChatOllama(
+        model=selected_model,
+        base_url="http://localhost:11434",
+        temperature=0
+    )
 
-def post_result_text(file_path):
+def post_result_text(original_text, file_path):
     full_path =os.path.join(file_path, "docker-compose.yml")
     text = f"""\n\n Since this a smart agent so I have already saved the yaml  file at \n `{full_path}`. 
     If you press the docker compose up button you can see the output and error in the docker manager view.
      \n And do not worry I will notify in the chat if it does not execute. Enjoy!! \n"""
     text = escape_braces(text)
-    return text
+    if type(original_text) != type(''):
+        return text
+    return original_text + text
 
 # System prompt configuration
 system_prompt = SystemMessagePromptTemplate.from_template(escape_braces(MAIN_PROMPT))
 
 def generate_ai_response(prompt_chain):
-    processing_pipeline = prompt_chain | llm_engine | StrOutputParser()
-    return processing_pipeline.invoke({})
+    if selected_model == "deepseek/deepseek-r1:free":
+        try:
+            # Convert the prompt chain to a string
+            # Use the OpenAI client to generate a response
+            completion = llm_engine.chat.completions.create(
+                model=selected_model,
+                messages=prompt_chain
+            )
+            # Extract and return the AI's response
+            return completion.choices[0].message.content
+        except Exception as e:
+            print(f"API Error: {e}")
+            return None
+    else:
+        processing_pipeline = prompt_chain | llm_engine | StrOutputParser()
+        return processing_pipeline.invoke({})
 
 def build_prompt_chain():
-    prompt_sequence = [system_prompt]
-    for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
-        msg["content"] = escape_braces(msg["content"])
-        if msg["role"] == "user":
-            prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
-        elif msg["role"] == "ai":
-            prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))
-    return ChatPromptTemplate.from_messages(prompt_sequence)
+    
+    if selected_model == "deepseek/deepseek-r1:free":
+        messages = [{"role": "system", "content":escape_braces(SHORT_PROMPT) }]
+        for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
+            msg["content"] = escape_braces(msg["content"])
+            messages.append(msg)
+        return messages
+    else:
+        prompt_sequence = [system_prompt]
+        for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
+            msg["content"] = escape_braces(msg["content"])
+            if msg["role"] == "user":
+                prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
+            elif msg["role"] == "ai":
+                prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))
+        return ChatPromptTemplate.from_messages(prompt_sequence)
 
 # Chat container
 chat_container = st.container()
@@ -585,11 +627,12 @@ with chat_container:
             with st.spinner("🧠 Processing..."):
                 prompt_chain = build_prompt_chain()
                 ai_response = generate_ai_response(prompt_chain)
+                ai_response = escape_braces(ai_response)
                 save_path = os.path.join(MAIN_WORKSPACE_DIR, st.session_state.directory)
                 save_code_to_files(ai_response, save_path)
-                ai_response = ai_response + post_result_text(save_path)
+                new_ai_response = post_result_text(ai_response, save_path)
                 st.session_state.chats[st.session_state.current_chat_id]['messages'].append(
-                    {"role": "ai", "content": ai_response}
+                    {"role": "ai", "content": new_ai_response}
                 )
                 st.session_state.awaiting_response = False
                 st.rerun()

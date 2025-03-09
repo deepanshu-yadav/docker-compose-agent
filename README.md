@@ -9,11 +9,18 @@ Install docker from [here](https://docs.docker.com/engine/install/)
 
 Install docker compose from [here](https://docs.docker.com/compose/install/)
 
-## Installation of ollama 
+
+## Now install requirements.txt 
+
+Which ever python  installation you are running be it virtual environment or anaconda 
+install `pip install -r requirements.txt`
+
+## Offline models
+### Installation of ollama 
 
 install ollma from [here](https://ollama.com/download)
 
-## Install offline models of deep seek
+### Install offline models of deep seek
 In one terminal keep running the following
 ```
 ollama serve 
@@ -39,10 +46,40 @@ curl http://localhost:11434/api/generate -d '{
 
 Make sure it works and it keeps on running at `11434`
 
-## Now install requirements.txt 
+### Online model (free tier)
 
-Which ever python  installation you are running be it virtual environment or anaconda 
-install `pip install -r requirements.txt`
+1. Go to [openrouter](https://openrouter.ai/)
+2. Create a free key for deep seek. You need to choose option **DeepSeek-R1 (free)**
+3. Copy that key and paste in code snippet given below
+4. Run the following code to make sure it works. 
+
+```
+from openai import OpenAI
+
+client = OpenAI(
+  base_url="https://openrouter.ai/api/v1",
+  api_key="<your_created_key>",
+)
+
+completion = client.chat.completions.create(
+ 
+  model="deepseek/deepseek-r1:free",
+  messages=[
+    {
+      "role": "user",
+      "content": "What is the meaning of life?"
+    }
+  ]
+)
+print(completion.choices[0].message.content)
+```
+Once you make sure that works 
+run 
+
+```
+export DEEPSEEK_FREE_KEY=<your_key>
+```
+
 
 ## Finally 
 
@@ -82,11 +119,7 @@ If a service is running we can continously monitor it and inform the AI about an
 
 # Future plans
 
-## Offline vs Online
 
-This is working only for offline deepseek model. Online inference with deepseek are much
-better and faster. So support for chatting with Deepseek API.
-Offline speed is very slow on my mac for 32b model.
 
 ## Another AI agent for manipulating this services.
 1. Generating curl commands for interacting with various services.
