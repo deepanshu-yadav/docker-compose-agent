@@ -15,6 +15,7 @@ Install docker compose from [here](https://docs.docker.com/compose/install/)
 Which ever python  installation you are running be it virtual environment or anaconda 
 install `pip install -r requirements.txt`
 
+# Model selection 
 ## Offline models
 ### Installation of ollama 
 
@@ -46,7 +47,7 @@ curl http://localhost:11434/api/generate -d '{
 
 Make sure it works and it keeps on running at `11434`
 
-### Online model (free tier)
+## Online model (free tier)
 
 1. Go to [openrouter](https://openrouter.ai/)
 2. Create a free key for deep seek. You need to choose option **DeepSeek-R1 (free)**
@@ -74,14 +75,15 @@ completion = client.chat.completions.create(
 print(completion.choices[0].message.content)
 ```
 Once you make sure that works 
-run 
+run the following 
 
 ```
 export DEEPSEEK_FREE_KEY=<your_key>
 ```
 
 
-## Finally 
+# Executing the application 
+Use
 
 ```
 streamlit run app.py
