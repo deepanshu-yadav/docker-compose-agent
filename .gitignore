@@ -1,0 +1,20 @@
+__pycache__/*
+*.py[cod]
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.egg-info/
+.venv/
+.venv.bak/
+__pycache__/
+__pycache__/*/
+*.egg-info/
+*.egg-info/*/
+.venv/
+.venv.bak/
+.idea/
+.vscode/
+
+# Local configuration files
+unified_docker_compose_rag/*
