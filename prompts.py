@@ -274,3 +274,9 @@ curl localhost:8000
 Hello World! I have been seen 2 times.
 ```
 """
+
+def construct_full_prompt(query, context, sources):
+  return f"""USER QUESTION:    {query} \n \n
+             RETRIEVED INFORMATION: {context} \n \n
+             SOURCES: {sources} \n \n
+          """

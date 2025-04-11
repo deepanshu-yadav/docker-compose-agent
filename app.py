@@ -14,10 +14,10 @@ from datetime import datetime
 import uuid
 
 # Configure asyncio for Windows
+import asyncio
 if platform.system() == "Windows":
-    import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
+    
 # Define constants
 MAIN_WORKSPACE_DIR = os.path.join(os.getcwd(), "workspaces")
 DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
@@ -38,14 +38,13 @@ from langchain.llms.base import LLM
 from openai import OpenAI
 
 # Import your local modules
-from prompts import MAIN_PROMPT, SHORT_PROMPT
+from prompts import MAIN_PROMPT, SHORT_PROMPT, construct_full_prompt
 from helpers import *
 
 # Import the rag module last
 from rag import initialize_rag, get_context
 
 initialize_rag()
-print(DEEPSEEK_FREE_KEY)
 
 # Page config
 st.set_page_config(
@@ -513,19 +512,30 @@ def generate_ai_response(prompt_chain):
 def build_prompt_chain():
     
     if selected_model == "deepseek/deepseek-r1-zero:free":
-        messages = [{"role": "system", "content":escape_braces(SHORT_PROMPT) }]
+        messages = [{"role": "system", "content":escape_braces(MAIN_PROMPT) }]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
+            if msg["role"] == "user":
+                context = get_context(msg["content"])['context']
+                sources = get_context(msg["content"])['sources']
+                msg = {"role": "user", "content": escape_braces(
+                    construct_full_prompt(msg["content"], context, sources))}
             messages.append(msg)
+        print(f"Messages for debugging {messages}")
         return messages
     else:
         prompt_sequence = [system_prompt]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
             if msg["role"] == "user":
+                context = get_context(msg["content"])['context']
+                sources = get_context(msg["content"])['sources']
+                msg["content"] = escape_braces(
+                    construct_full_prompt(msg["content"], context, sources))
                 prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
             elif msg["role"] == "ai":
                 prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))
+        print(f"Messages for debugging {prompt_sequence}")
         return ChatPromptTemplate.from_messages(prompt_sequence)
 
 # Chat container

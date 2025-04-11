@@ -1,6 +1,7 @@
 import os
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
-
+import torch 
+torch.classes.__path__ = []
 # Then your existing imports
 import re
 import yaml
