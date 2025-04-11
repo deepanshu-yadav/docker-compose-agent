@@ -1,3 +1,28 @@
+# Set environment variables before any imports
+import os
+os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
+
+# System modules
+import sys
+import re
+import threading
+import shutil
+import time
+import platform
+import subprocess
+from datetime import datetime
+import uuid
+
+# Configure asyncio for Windows
+if platform.system() == "Windows":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+# Define constants
+MAIN_WORKSPACE_DIR = os.path.join(os.getcwd(), "workspaces")
+DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
+
+# Now import streamlit and other non-torch libraries
 import streamlit as st
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
@@ -9,25 +34,17 @@ from langchain_core.prompts import (
 )
 from pydantic import BaseModel, Field
 from typing import Optional, List, Mapping, Any
-
 from langchain.llms.base import LLM
-from typing import Optional, List, Mapping, Any
 from openai import OpenAI
-import uuid
-from datetime import datetime
-import re
-import threading
-import os
-import subprocess
-import shutil
-import time
-import asyncio
 
+# Import your local modules
 from prompts import MAIN_PROMPT, SHORT_PROMPT
 from helpers import *
 
-MAIN_WORKSPACE_DIR=os.path.join(os.getcwd(), "workspaces")
-DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
+# Import the rag module last
+from rag import initialize_rag, get_context
+
+initialize_rag()
 print(DEEPSEEK_FREE_KEY)
 
 # Page config
@@ -182,6 +199,18 @@ def notify_chat(err_str):
                   "content": escape_braces(err_str)}
     st.session_state.chats[st.session_state.current_chat_id]['messages'].append(error_dict)
     st.rerun()
+
+# Function for running asyncio on windows
+def setup_asyncio_for_windows():
+    """Configure asyncio to work properly on Windows."""
+    if platform.system() == "Windows":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+# Wrapper function for windows compatibility
+def run_docker_compose_wrapper(func, *args):
+    """Run an asyncio function with proper Windows compatibility."""
+    setup_asyncio_for_windows()
+    return asyncio.run(func(*args))
 
 # Async function to execute the docker-compose command and capture output
 async def run_docker_compose_up(directory, project_name, stdout_placeholder, stderr_placeholder):
@@ -366,17 +395,18 @@ with st.expander("Docker Compose Manager", expanded=True):
         if st.button("Start Docker-Compose"):
             if os.path.exists(workspace_dir) and os.path.exists(os.path.join(workspace_dir, "docker-compose.yml")):
                 stop_event.clear()  # Reset the stop event
-                asyncio.run(run_docker_compose_up(workspace_dir, project_name, stdout_placeholder, stderr_placeholder))
+                run_docker_compose_wrapper(run_docker_compose_up, workspace_dir,
+                                           project_name, stdout_placeholder, stderr_placeholder)
             else:
                 st.error("Invalid workspace directory or docker-compose.yml not found.")
     with col2:
         if st.button("Stop Docker-Compose"):
             if os.path.exists(workspace_dir) and os.path.exists(os.path.join(workspace_dir, "docker-compose.yml")):
                 stop_event.set()  # Signal the while loop to stop
-                asyncio.run(run_docker_compose_down(workspace_dir, project_name, stdout_placeholder, stderr_placeholder))
+                run_docker_compose_wrapper(run_docker_compose_down, workspace_dir, project_name,
+                                           stdout_placeholder, stderr_placeholder)
             else:
                 st.error("Invalid workspace directory or docker-compose.yml not found.")
-
 
 # Sidebar layout
 with st.sidebar:
