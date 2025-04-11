@@ -38,7 +38,7 @@ from langchain.llms.base import LLM
 from openai import OpenAI
 
 # Import your local modules
-from prompts import MAIN_PROMPT, SHORT_PROMPT, construct_full_prompt
+from prompts import MAIN_PROMPT, construct_full_prompt
 from helpers import *
 
 # Import the rag module last
