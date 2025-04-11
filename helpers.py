@@ -3,7 +3,7 @@ import re
 import subprocess
 import json
 import requests
-import datetime
+from datetime import datetime
 
 def save_code_to_files(text, main_dir):
     if type(text) != type(''):

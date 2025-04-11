@@ -28,6 +28,7 @@ from helpers import *
 
 MAIN_WORKSPACE_DIR=os.path.join(os.getcwd(), "workspaces")
 DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
+print(DEEPSEEK_FREE_KEY)
 
 # Page config
 st.set_page_config(
@@ -385,7 +386,7 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     selected_model = st.selectbox(
         "Choose Model",
-        ["deepseek/deepseek-r1:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b"],
+        ["deepseek/deepseek-r1-zero:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b"],
         index=0
     )
     
@@ -434,7 +435,7 @@ st.title("AI Devops Agent")
 st.caption("🚀 Your AI Devops expert with deploying superpowers.")
 
 # Initialize LLM engine
-if selected_model == "deepseek/deepseek-r1:free":
+if selected_model == "deepseek/deepseek-r1-zero:free":
     # Set up the OpenAI client with the custom API endpoint
     
     llm_engine = OpenAI(
@@ -462,7 +463,7 @@ def post_result_text(original_text, file_path):
 system_prompt = SystemMessagePromptTemplate.from_template(escape_braces(MAIN_PROMPT))
 
 def generate_ai_response(prompt_chain):
-    if selected_model == "deepseek/deepseek-r1:free":
+    if selected_model == "deepseek/deepseek-r1-zero:free":
         try:
             # Convert the prompt chain to a string
             # Use the OpenAI client to generate a response
@@ -481,7 +482,7 @@ def generate_ai_response(prompt_chain):
 
 def build_prompt_chain():
     
-    if selected_model == "deepseek/deepseek-r1:free":
+    if selected_model == "deepseek/deepseek-r1-zero:free":
         messages = [{"role": "system", "content":escape_braces(SHORT_PROMPT) }]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
