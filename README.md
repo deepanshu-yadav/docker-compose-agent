@@ -1,5 +1,4 @@
 
-
 # Pre Requisites
 ## Installation of docker 
 
@@ -15,11 +14,25 @@ Install docker compose from [here](https://docs.docker.com/compose/install/)
 Which ever python  installation you are running be it virtual environment or anaconda 
 install `pip install -r requirements.txt`
 
+## Construct RAG
+For generating RAG you need to clone some existing docker repositories
+
+```
+mkdir -p repos
+cd repos
+git clone https://github.com/Haxxnet/Compose-Examples.git
+
+git clone https://github.com/docker/awesome-compose.git 
+
+git clone https://github.com/ruanbekker/awesome-docker-compose.git
+
+```
+
 # Model selection 
 ## Offline models
 ### Installation of ollama 
 
-install ollma from [here](https://ollama.com/download)
+install ollama from [here](https://ollama.com/download)
 
 ### Install offline models of deep seek
 In one terminal keep running the following
@@ -32,6 +45,7 @@ Also download these models
 ollama pull deepseek-r1:1.5b 
 ollama pull deepseek-r1:7b
 ollama pull deepseek-r1:32b
+ollama pull deepcoder:14b
 ```
 
 After downloading test the models using
@@ -76,11 +90,15 @@ print(completion.choices[0].message.content)
 ```
 Once you make sure that works 
 run the following 
-
+in linux use 
 ```
 export DEEPSEEK_FREE_KEY=<your_key>
 ```
+in windows use
 
+```
+set DEEPSEEK_FREE_KEY="<your_key>"
+```
 
 # Executing the application 
 Use
@@ -134,7 +152,8 @@ these services.
 environement creation as well.
 
 ## Saving working configuration in database.
-Saving the configurations generated in database ( implementing RAG). 
+1. Saving the configurations generated in database 
+2. implementing RAG 
 
 ## Moving to kubernetes after this. 
 Repeating all of this kubenetes. 
