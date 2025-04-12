@@ -415,7 +415,7 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     selected_model = st.selectbox(
         "Choose Model",
-        ["deepseek/deepseek-r1-zero:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b"],
+        ["deepseek/deepseek-r1-zero:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b", "deepcoder:1.5b"],
         index=0
     )
     
@@ -515,23 +515,26 @@ def build_prompt_chain():
         messages = [{"role": "system", "content":escape_braces(MAIN_PROMPT) }]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
-            if msg["role"] == "user":
+            if msg["role"] == "user" and not is_context_already_present(msg["content"]):
                 context = get_context(msg["content"])['context']
                 sources = get_context(msg["content"])['sources']
                 msg = {"role": "user", "content": escape_braces(
                     construct_full_prompt(msg["content"], context, sources))}
             messages.append(msg)
         print(f"Messages for debugging {messages}")
+        st.session_state.chats[st.session_state.current_chat_id]['messages'] = messages
+        # Update the chat history in session state
         return messages
     else:
         prompt_sequence = [system_prompt]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
             if msg["role"] == "user":
-                context = get_context(msg["content"])['context']
-                sources = get_context(msg["content"])['sources']
-                msg["content"] = escape_braces(
-                    construct_full_prompt(msg["content"], context, sources))
+                if not is_context_already_present(msg["content"]):
+                    context = get_context(msg["content"])['context']
+                    sources = get_context(msg["content"])['sources']
+                    msg["content"] = escape_braces(
+                        construct_full_prompt(msg["content"], context, sources))
                 prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
             elif msg["role"] == "ai":
                 prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))

@@ -98,3 +98,8 @@ def read_files_in_directory(directory):
                 result += f"Could not read file {file_path}: {e}\n\n"
 
     return result
+
+def is_context_already_present(context_str):
+    if "RETRIEVED INFORMATION:" in context_str:
+        return True
+    return False
