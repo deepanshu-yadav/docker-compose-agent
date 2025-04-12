@@ -99,10 +99,12 @@ def read_files_in_directory(directory):
 
     return result
 
+
 def is_context_already_present(context_str):
     if "RETRIEVED INFORMATION:" in context_str:
         return True
     return False
+
 
 def save_llm_output_to_files(text, main_dir):
     # Create the main directory if it doesn't exist
@@ -141,3 +143,23 @@ def save_llm_output_to_files(text, main_dir):
                 
                 # Store the mapping for later processing
                 file_mappings.append((filename, code_content))
+    
+    # Process all found file mappings
+    for filename, content in file_mappings:
+        # Fix curly braces - convert ${{ to ${
+        content = re.sub(r'\$\{\{([^}]+)\}\}', r'${\1}', content)
+        
+        # No special handling needed for escaped newlines (\n) within quotes
+        # They will be written to the file as literal characters
+        
+        # Create full path with directories
+        full_path = os.path.join(main_dir, filename)
+        directory = os.path.dirname(full_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+            
+        # Write content to file
+        with open(full_path, 'w') as f:
+            f.write(content)
+            
+        print(f"Saved content to {full_path}")
