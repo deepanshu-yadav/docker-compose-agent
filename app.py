@@ -417,7 +417,8 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     selected_model = st.selectbox(
         "Choose Model",
-        ["deepseek/deepseek-r1-zero:free","deepseek-r1:32b","deepseek-r1:7b", "deepseek-r1:1.5b", "deepcoder:1.5b"],
+        ["deepseek/deepseek-r1-zero:free", "deepcoder:14b", "llama3.2:3b", "llama3.2:1b", "gemma3:4b", "gemma3:12b","gemma3:4b","deepseek-r1:32b","deepseek-r1:7b",
+         "deepseek-r1:1.5b", "deepcoder:1.5b"],
         index=0
     )
     

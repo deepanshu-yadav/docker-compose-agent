@@ -8,7 +8,6 @@ Install docker from [here](https://docs.docker.com/engine/install/)
 
 Install docker compose from [here](https://docs.docker.com/compose/install/)
 
-
 ## Now install requirements.txt 
 
 Which ever python  installation you are running be it virtual environment or anaconda 
@@ -45,7 +44,13 @@ Also download these models
 ollama pull deepseek-r1:1.5b 
 ollama pull deepseek-r1:7b
 ollama pull deepseek-r1:32b
-ollama pull deepcoder:14b
+ollama pull deepcoder:14b 
+ollama pull llama3.2:3b 
+ollama pull llama3.2:1b
+ollama pull deepcoder:1.5b
+ollama pull gemma3:4b 
+ollama pull gemma3:12b 
+ollama pull gemma3:4b
 ```
 
 After downloading test the models using
