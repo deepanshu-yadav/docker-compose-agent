@@ -27,6 +27,17 @@ git clone https://github.com/ruanbekker/awesome-docker-compose.git
 
 ```
 
+## Select either offline or online model. It could be ollama or online using 
+## openrouter free key.  
+
+## Note 
+### If you are using github codespaces then it is very easy to try this just use
+
+```
+chmod +x setup.sh
+./setup.sh
+```
+
 # Model selection 
 ## Offline models
 ### Installation of ollama 
