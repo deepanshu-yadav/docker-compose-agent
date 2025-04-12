@@ -469,17 +469,33 @@ st.caption("🚀 Your AI Devops expert with deploying superpowers.")
 # Initialize LLM engine
 if selected_model == "deepseek/deepseek-r1-zero:free":
     # Set up the OpenAI client with the custom API endpoint
-    
-    llm_engine = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=DEEPSEEK_FREE_KEY,
-    )
+    try:
+        llm_engine = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=DEEPSEEK_FREE_KEY,
+        )
+    except Exception as e:
+        try:
+            llm_engine = ChatOllama(
+            model="llama3.2:3b",
+            base_url="http://localhost:11434",
+            temperature=0
+            )
+        except Exception as e:
+            print(f"API Error: {e}")
+            st.error("API Error: Please check your server connection with ollama")
+            llm_engine = None
 else:
-    llm_engine = ChatOllama(
-        model=selected_model,
-        base_url="http://localhost:11434",
-        temperature=0
-    )
+    try:
+        llm_engine = ChatOllama(
+            model=selected_model,
+            base_url="http://localhost:11434",
+            temperature=0
+        )
+    except Exception as e:
+        print(f"API Error: {e}")
+        st.error("API Error: Please check your server connection with ollama")
+        llm_engine = None
 
 def post_result_text(original_text, file_path):
     full_path =os.path.join(file_path, "docker-compose.yml")

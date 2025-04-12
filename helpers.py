@@ -175,12 +175,15 @@ def save_llm_output_to_files(text, main_dir):
     
     # Process all found file mappings
     for filename, content in file_mappings:
-        # First escape all actual newlines
-        content = content.replace('\n', '\\NEWLINE_TEMP\\')
-        
-        # Then restore literal newlines in strings
-        content = content.replace('\\\\NEWLINE_TEMP\\', '\\n')
-        content = content.replace('\\NEWLINE_TEMP\\', '\n')
+        # Special handling for Python files
+        if filename.endswith('.py'):
+            # Convert to raw string and handle newlines properly
+            # May not work as expected for all cases, but should be fine for most
+            # for example: print("Hello World\n ") may not work as expected
+            content = r'{}'.format(content).replace('\n"', '\\n"').replace("\n'", "\\n'").replace('\t"', '\\t"').replace("\t'", "\\t'")
+        else:
+            # For non-Python files, keep content as-is
+            pass
         
         # Create full path with directories
         full_path = os.path.join(main_dir, filename)
