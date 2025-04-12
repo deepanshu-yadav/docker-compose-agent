@@ -120,13 +120,27 @@ def save_llm_output_to_files(text, main_dir):
         if i+1 < len(sections):
             code_content = sections[i+1].strip()
             
+            # Skip shell commands that don't create files
+            if code_content.startswith('mkdir') or code_content.startswith('cd') or \
+               code_content.startswith('pip') or code_content.startswith('docker-compose'):
+                continue
+            
             # Look for filename patterns in the context before the code block
             filename = None
             
-            # Pattern for "Create a file named X:" or similar
+            # Patterns for finding filenames in various formats
             file_patterns = [
-                r'[Cc]reate (?:a )?file (?:name|named|called) (?:"|\')?([^:"\'\n]+)(?:"|\')?:?',
-                r'([A-Za-z0-9_\-\.\/]+):'
+                # Pattern for "Create a file named X:" or similar
+                r'[Cc]reate (?:a )?file (?:name|named|called) (?:"|\')?([^:"\'\n]+)(?:"|\')?',
+                
+                # Pattern for filenames in Markdown headers like "Create a **`Dockerfile`"
+                r'[Cc]reate a (?:\*\*)?`([^`]+)`',
+                
+                # Pattern for filenames mentioned with backticks
+                r'file called `([^`]+)`',
+                
+                # Last resort - look for filename pattern with extension
+                r'([A-Za-z0-9_\-\.\/]+\.[a-zA-Z0-9]+)'
             ]
             
             for pattern in file_patterns:
