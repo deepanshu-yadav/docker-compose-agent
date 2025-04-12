@@ -44,7 +44,9 @@ from helpers import *
 # Import the rag module last
 from rag import initialize_rag, get_context
 
+print("Loading/ Creating the vector database...")
 initialize_rag()
+print("The vector database is successfully loaded/ created.")
 
 # Page config
 st.set_page_config(
@@ -163,7 +165,7 @@ if "awaiting_response" not in st.session_state:
 def create_new_chat():
     new_chat_id = str(uuid.uuid4())
     st.session_state.chats[new_chat_id] = {
-        'messages': [{"role": "ai", "content": "HHi! I'm a Devops Agent. How can I help you deploy today? 💻"}],
+        'messages': [{"role": "ai", "content": "Hi! I'm a Devops Agent. How can I help you deploy today? 💻"}],
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'title': "New Chat"
     }
@@ -516,12 +518,14 @@ def build_prompt_chain():
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
             if msg["role"] == "user" and not is_context_already_present(msg["content"]):
+                print("Getting context...")
                 context = get_context(msg["content"])['context']
                 sources = get_context(msg["content"])['sources']
                 msg = {"role": "user", "content": escape_braces(
                     construct_full_prompt(msg["content"], context, sources))}
+                print("Context retrieved from the vector database")
             messages.append(msg)
-        print(f"Messages for debugging {messages}")
+        # print(f"Messages for debugging {messages}")
         st.session_state.chats[st.session_state.current_chat_id]['messages'] = messages
         # Update the chat history in session state
         return messages
@@ -531,14 +535,16 @@ def build_prompt_chain():
             msg["content"] = escape_braces(msg["content"])
             if msg["role"] == "user":
                 if not is_context_already_present(msg["content"]):
+                    print("Getting context...")
                     context = get_context(msg["content"])['context']
                     sources = get_context(msg["content"])['sources']
                     msg["content"] = escape_braces(
                         construct_full_prompt(msg["content"], context, sources))
+                    print("Context retrieved from the vector database")
                 prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
             elif msg["role"] == "ai":
                 prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))
-        print(f"Messages for debugging {prompt_sequence}")
+        # print(f"Messages for debugging {prompt_sequence}")
         return ChatPromptTemplate.from_messages(prompt_sequence)
 
 # Chat container
