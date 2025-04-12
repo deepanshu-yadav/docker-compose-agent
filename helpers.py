@@ -111,60 +111,76 @@ def save_llm_output_to_files(text, main_dir):
     os.makedirs(main_dir, exist_ok=True)
     
     # Split the text into sections based on code blocks
-    sections = re.split(r'```', text)
+    sections = re.split(r'```(?:[a-zA-Z0-9]*)?\n', text)
     
     # Process sections in pairs (text before code block + code block content)
     file_mappings = []
     for i in range(0, len(sections)-1, 2):
-        context = sections[i]
+        context = sections[i].strip()
         if i+1 < len(sections):
             code_content = sections[i+1].strip()
             
             # Skip shell commands that don't create files
-            if code_content.startswith('mkdir') or code_content.startswith('cd') or \
-               code_content.startswith('pip') or code_content.startswith('docker-compose'):
+            if code_content.startswith(('mkdir', 'cd', 'pip', 'docker-compose')):
                 continue
             
             # Look for filename patterns in the context before the code block
             filename = None
+            directory = None
+            
+            # First check for explicit directory mentions
+            dir_match = re.search(r'in the ([^\s]+) (?:directory|folder)', context, re.I)
+            if dir_match:
+                directory = dir_match.group(1).strip('"\'').strip()
             
             # Patterns for finding filenames in various formats
             file_patterns = [
-                # Pattern for "Create a file named X:" or similar
-                r'[Cc]reate (?:a )?file (?:name|named|called) (?:"|\')?([^:"\'\n]+)(?:"|\')?',
-                
-                # Pattern for filenames in Markdown headers like "Create a **`Dockerfile`"
-                r'[Cc]reate a (?:\*\*)?`([^`]+)`',
-                
-                # Pattern for filenames mentioned with backticks
-                r'file called `([^`]+)`',
-                
-                # Last resort - look for filename pattern with extension
-                r'([A-Za-z0-9_\-\.\/]+\.[a-zA-Z0-9]+)'
+                r'[Cc]reate (?:a )?(?:new )?(?:file|script) (?:name|named|called) ["\']?([^"\'\n]+?)["\']?(?: and copy the following code into it)?$',
+                r'[Cc]reate (?:a )?(?:new )?(?:file|script) (?:name|named|called) ["\']?([^"\'\n]+?)["\']?(?: with the following contents)?$',
+                r'[Cc]reate (?:a )?(?:new )?(?:file|script) (?:name|named|called) ["\']?([^"\'\n]+?)["\']?(?: in the [^\s]+ directory)?$',
+                r'[Cc]reate (?:a )?(?:new )?(?:file|script) ["\']?([^"\'\n]+?)["\']?(?: and copy the following code into it)?$',
+                r'(?:file|script) called `([^`]+)`',
+                r'named `([^`]+)`',
+                r'[Ss]ave this (?:as|to) ["\']?([^"\'\n]+?)["\']?$',
+                r'["\']?([A-Za-z0-9_\-\.\/]+\.[a-zA-Z0-9]+)["\']?',
+                r'["\']?([A-Za-z0-9_\-\.\/]+)["\']?'
             ]
             
             for pattern in file_patterns:
-                matches = re.findall(pattern, context)
+                matches = re.search(pattern, context)
                 if matches:
-                    # Take the last match as it's likely closest to the code block
-                    filename = matches[-1].strip()
-                    break
+                    for group in matches.groups():
+                        if group and group.strip():
+                            filename = group.strip()
+                            break
+                    if filename:
+                        break
             
             if filename:
-                # File name mapping
+                filename = re.sub(r'["\'].*', '', filename)
+                filename = filename.strip('"\'').strip()
+                filename = re.sub(r'[^\w\.\/-].*$', '', filename)
+                
+                if directory:
+                    filename = f"{directory}/{filename}"
+                elif '/' in filename or '\\' in filename:
+                    pass
+                elif 'main directory' in context.lower():
+                    pass
+                
                 if filename == "compose.yml":
                     filename = "docker-compose.yml"
                 
-                # Store the mapping for later processing
                 file_mappings.append((filename, code_content))
     
     # Process all found file mappings
     for filename, content in file_mappings:
-        # Fix curly braces - convert ${{ to ${
-        content = re.sub(r'\$\{\{([^}]+)\}\}', r'${\1}', content)
+        # First escape all actual newlines
+        content = content.replace('\n', '\\NEWLINE_TEMP\\')
         
-        # No special handling needed for escaped newlines (\n) within quotes
-        # They will be written to the file as literal characters
+        # Then restore literal newlines in strings
+        content = content.replace('\\\\NEWLINE_TEMP\\', '\\n')
+        content = content.replace('\\NEWLINE_TEMP\\', '\n')
         
         # Create full path with directories
         full_path = os.path.join(main_dir, filename)
