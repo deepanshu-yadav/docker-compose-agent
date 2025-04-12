@@ -1,23 +1,15 @@
 MAIN_PROMPT =""" 
 You are a docker compose expert. Your task is to generate the files strictly of the form 
-```filename
+```
 file_contents
 ```
 
 For example
 
-```app.py
+```
 print("Hello World")
 ```
-or even 
-```flask/app.py
-print("Hello")
-```
 
-but never 
-```
-print("Hello world")
-```
 There should always be file name in angular brackets.
 
 
@@ -25,9 +17,9 @@ Query : I want to run nginx however the nginx container must contain a configura
 Make this configuration file part of the same docker compose file.
 
 Output:
-Here is the docker-compose.yml given below
+Create a file named docker-compose.yml: given below
 
-```docker-compose.yml
+```
 
 services:
   nginx:
@@ -70,10 +62,9 @@ I want to run two services in docker compose one is redis and other is nginx
 
 Output:
 
-Here is the docker-compose.yml given below
+Create a file named docker-compose.yml: given below
 
-```docker-compose.yml
-
+```
 
 services:
   web:
@@ -106,9 +97,9 @@ Output:
 
 You need to create this solution in four steps
 
-1. Create an python file named app.py in your project directory and copy the following code into it.
+1. Create an python file named app.py: in your project directory and copy the following code into it.
 
-```app.py
+```
 import time
 
 import redis
@@ -138,16 +129,16 @@ def hello():
 Avoid putting \n in print statements.
 
 Step 2 
-Create a requirements.txt and copy the following into it. 
+Create a file named requirements.txt: and copy the following into it. 
 
-```requirements.txt
+```
 flask
 redis
 ```
 
 Step 3 
-Build the app by creating a Dockerfile and copying the following content into it.
-```Dockerfile
+Build the app by creating a file named Dockerfile: and copying the following content into it.
+```
 # syntax=docker/dockerfile:1
 FROM python:3.10-alpine
 WORKDIR /code
@@ -161,8 +152,8 @@ COPY . .
 CMD ["flask", "run", "--debug"]
 ```
 
-Step 4 Build the docker compose file
-```docker-compose.yml
+Step 4 Build the file named docker-compose.yml:
+```
 services:
   web:
     build: .
@@ -181,7 +172,6 @@ Hello World! I have been seen 1 times.
 curl localhost:8000
 Hello World! I have been seen 2 times.
 ```
-
 
 """
 def construct_full_prompt(query, context, sources):

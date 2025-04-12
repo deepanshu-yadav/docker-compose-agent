@@ -565,7 +565,7 @@ with chat_container:
                 ai_response = generate_ai_response(prompt_chain)
                 ai_response = escape_braces(ai_response)
                 save_path = os.path.join(MAIN_WORKSPACE_DIR, st.session_state.directory)
-                save_code_to_files(ai_response, save_path)
+                save_llm_output_to_files(ai_response, save_path)
                 new_ai_response = post_result_text(ai_response, save_path)
                 st.session_state.chats[st.session_state.current_chat_id]['messages'].append(
                     {"role": "ai", "content": new_ai_response}

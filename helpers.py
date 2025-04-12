@@ -103,3 +103,41 @@ def is_context_already_present(context_str):
     if "RETRIEVED INFORMATION:" in context_str:
         return True
     return False
+
+def save_llm_output_to_files(text, main_dir):
+    # Create the main directory if it doesn't exist
+    os.makedirs(main_dir, exist_ok=True)
+    
+    # Split the text into sections based on code blocks
+    sections = re.split(r'```', text)
+    
+    # Process sections in pairs (text before code block + code block content)
+    file_mappings = []
+    for i in range(0, len(sections)-1, 2):
+        context = sections[i]
+        if i+1 < len(sections):
+            code_content = sections[i+1].strip()
+            
+            # Look for filename patterns in the context before the code block
+            filename = None
+            
+            # Pattern for "Create a file named X:" or similar
+            file_patterns = [
+                r'[Cc]reate (?:a )?file (?:name|named|called) (?:"|\')?([^:"\'\n]+)(?:"|\')?:?',
+                r'([A-Za-z0-9_\-\.\/]+):'
+            ]
+            
+            for pattern in file_patterns:
+                matches = re.findall(pattern, context)
+                if matches:
+                    # Take the last match as it's likely closest to the code block
+                    filename = matches[-1].strip()
+                    break
+            
+            if filename:
+                # File name mapping
+                if filename == "compose.yml":
+                    filename = "docker-compose.yml"
+                
+                # Store the mapping for later processing
+                file_mappings.append((filename, code_content))
