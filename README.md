@@ -1,6 +1,6 @@
 This repository tries to solve docker compose deployment problems through an AI Agent.
 
-[![DEMO](images/chat_interface.png)](https://www.youtube.com/watch?v=wCm5Dx_D90I&ab_channel=DeepanshuYadav)
+[![DEMO](images/video.png)](https://www.youtube.com/watch?v=wCm5Dx_D90I&ab_channel=DeepanshuYadav)
 
 
 
