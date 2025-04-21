@@ -38,7 +38,7 @@ from langchain.llms.base import LLM
 from openai import OpenAI
 
 # Import your local modules
-from prompts import MAIN_PROMPT, construct_full_prompt
+from prompts import MAIN_PROMPT, construct_full_prompt, SYSTEM_PROMPT
 from helpers import *
 
 # Import the rag module last
@@ -417,7 +417,7 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     selected_model = st.selectbox(
         "Choose Model",
-        ["deepseek/deepseek-r1-zero:free", "deepcoder:14b", "llama3.2:3b", "llama3.2:1b", "gemma3:4b", "gemma3:12b","gemma3:4b","deepseek-r1:32b","deepseek-r1:7b",
+        ["meta-llama/llama-4-maverick:free", "deepseek/deepseek-r1-zero:free", "deepcoder:14b", "llama3.2:3b", "llama3.2:1b", "gemma3:4b", "gemma3:12b","gemma3:4b","deepseek-r1:32b","deepseek-r1:7b",
          "deepseek-r1:1.5b", "deepcoder:1.5b"],
         index=0
     )
@@ -467,7 +467,7 @@ st.title("AI Devops Agent")
 st.caption("🚀 Your AI Devops expert with deploying superpowers.")
 
 # Initialize LLM engine
-if selected_model == "deepseek/deepseek-r1-zero:free":
+if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
     # Set up the OpenAI client with the custom API endpoint
     try:
         llm_engine = OpenAI(
@@ -508,10 +508,10 @@ def post_result_text(original_text, file_path):
     return original_text + text
 
 # System prompt configuration
-system_prompt = SystemMessagePromptTemplate.from_template(escape_braces(MAIN_PROMPT))
+system_prompt = SystemMessagePromptTemplate.from_template(escape_braces(SYSTEM_PROMPT))
 
 def generate_ai_response(prompt_chain):
-    if selected_model == "deepseek/deepseek-r1-zero:free":
+    if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
         try:
             # Convert the prompt chain to a string
             # Use the OpenAI client to generate a response
@@ -530,8 +530,8 @@ def generate_ai_response(prompt_chain):
 
 def build_prompt_chain():
     
-    if selected_model == "deepseek/deepseek-r1-zero:free":
-        messages = [{"role": "system", "content":escape_braces(MAIN_PROMPT) }]
+    if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
+        messages = [{"role": "system", "content":escape_braces(SYSTEM_PROMPT) }]
         for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
             msg["content"] = escape_braces(msg["content"])
             if msg["role"] == "user" and not is_context_already_present(msg["content"]):
