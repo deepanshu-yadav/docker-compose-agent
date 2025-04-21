@@ -15,179 +15,542 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
 from datetime import datetime, timedelta
+import networkx as nx
+import logging
+from collections import defaultdict
 
 # Import PyTorch-related libraries last
 from sentence_transformers import SentenceTransformer
 
 from configs import *
 
-###########################################
-# REPOSITORY PARSER COMPONENT
-###########################################
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-def is_text_file(filepath):
-    """Check if file is text-based by attempting to decode it"""
-    try:
-        with open(filepath, 'rb') as f:
-            chunk = f.read(1024)
-            if b'\x00' in chunk:  # Binary files often contain null bytes
-                return False
-            # Attempt to decode
-            chardet.detect(chunk)
-        return True
-    except:
-        return False
-
-def parse_file(filepath):
-    """Parse file content with encoding detection"""
-    try:
-        with open(filepath, 'rb') as f:
-            raw_data = f.read()
-            encoding = chardet.detect(raw_data)['encoding']
-        
-        if encoding is None:
-            encoding = 'utf-8'  # Fallback encoding
-            
-        with open(filepath, 'r', encoding=encoding, errors='replace') as f:
-            content = f.read()
-            
-        # Special handling for priority files
-        if any(filepath.endswith(ext) for ext in CONFIG["priority_extensions"]):
-            try:
-                if filepath.endswith(('.yml', '.yaml')):
-                    structured = yaml.safe_load(content)
-                    return {"content": structured, "type": "yaml"}
-                elif 'Dockerfile' in filepath:
-                    return {"content": content, "type": "dockerfile"}
-            except Exception as e:
-                print(f"Error parsing {filepath}: {str(e)}")
-                return {"content": content, "type": "text"}
-        
-        return {"content": content, "type": "text"}
-    except Exception as e:
-        print(f"Failed to parse {filepath}: {str(e)}")
-        return None
-
-def parse_repository(root_dir):
-    """Recursively parse repository preserving full hierarchy"""
-    file_data = []
-    if not os.path.isdir(root_dir):
-        print(f"Warning: Repository directory {root_dir} not found")
-        return file_data
-        
-    for root, _, files in os.walk(root_dir):
-        # Skip hidden directories
-        if any(part.startswith('.') for part in Path(root).parts):
-            continue
-            
-        for file in files:
-            filepath = os.path.join(root, file)
-            
-            # Skip hidden files and non-text files
-            if file.startswith('.') or not is_text_file(filepath):
-                continue
-                
-            # Get relative path for better hierarchy representation
-            rel_path = os.path.relpath(filepath, root_dir)
-            parsed = parse_file(filepath)
-            if parsed:
-                parsed.update({
-                    "path": rel_path,
-                    "full_path": filepath,
-                    "directory": os.path.dirname(rel_path)
-                })
-                file_data.append(parsed)
-    return file_data
-
-def chunk_repository_data(file_data):
-    """Create chunks with hierarchy-aware metadata"""
-    chunks = []
-    for doc in file_data:
-        # Special handling for YAML files
-        if doc["type"] == "yaml" and isinstance(doc["content"], dict):
-            for service_name, service_config in doc["content"].get('services', {}).items():
-                chunk_id = f"{doc['path']}::service::{service_name}"
-                chunk_content = f"Service '{service_name}' in {doc['path']}:\n{yaml.dump(service_config)}"
-                chunks.append({
-                    "id": chunk_id,
-                    "content": chunk_content,
-                    "metadata": {
-                        "source": doc["path"],
-                        "service": service_name,
-                        "directory": doc["directory"],
-                        "type": "docker_service",
-                        "origin": "repo"
-                    }
-                })
-        
-        # Handle Dockerfiles
-        elif doc["type"] == "dockerfile":
-            chunk_content = f"Dockerfile at {doc['path']}:\n{doc['content']}"
-            chunks.append({
-                "id": f"{doc['path']}::dockerfile",
-                "content": chunk_content,
-                "metadata": {
-                    "source": doc["path"],
-                    "directory": doc["directory"],
-                    "type": "dockerfile",
-                    "origin": "repo"
-                }
-            })
-        
-        # Handle other text files (split by meaningful chunks)
-        else:
-            # Simple heuristic chunking - can be improved
-            lines = doc["content"].split('\n')
-            current_chunk = []
-            current_line_num = 0
-            
-            for i, line in enumerate(lines):
-                if line.strip():
-                    current_chunk.append(line)
-                    
-                # Create chunk when reaching reasonable size or significant empty space
-                if (len(current_chunk) >= 15 or 
-                    (len(current_chunk) > 5 and i + 1 < len(lines) and not lines[i+1].strip())):
-                    if current_chunk:
-                        chunk_text = '\n'.join(current_chunk)
-                        chunk_id = f"{doc['path']}::lines::{current_line_num}-{i}"
-                        chunk_content = f"{doc['path']} (lines {current_line_num+1}-{i+1}):\n{chunk_text}"
-                        
-                        chunks.append({
-                            "id": chunk_id,
-                            "content": chunk_content,
-                            "metadata": {
-                                "source": doc["path"],
-                                "directory": doc["directory"],
-                                "type": doc["type"],
-                                "line_start": current_line_num + 1,
-                                "line_end": i + 1,
-                                "origin": "repo"
-                            }
-                        })
-                        current_chunk = []
-                        current_line_num = i + 1
-            
-            # Add remaining lines as final chunk
-            if current_chunk:
-                chunk_text = '\n'.join(current_chunk)
-                chunk_id = f"{doc['path']}::lines::{current_line_num}-{len(lines)-1}"
-                chunk_content = f"{doc['path']} (lines {current_line_num+1}-{len(lines)}):\n{chunk_text}"
-                
-                chunks.append({
-                    "id": chunk_id,
-                    "content": chunk_content,
-                    "metadata": {
-                        "source": doc["path"],
-                        "directory": doc["directory"],
-                        "type": doc["type"],
-                        "line_start": current_line_num + 1,
-                        "line_end": len(lines),
-                        "origin": "repo"
-                    }
-                })
+class GraphRepo:
     
-    return chunks
+    """Graph repository for Docker Compose files and related documents"""
+    def __init__(self):
+        self.indices_artifacts = None
+    
+    @staticmethod
+    def is_text_file(filepath):
+        """Check if file is text-based by attempting to decode it"""
+        try:
+            with open(filepath, 'rb') as f:
+                chunk = f.read(1024)
+                if b'\x00' in chunk:
+                    logger.debug(f"Skipping {filepath}: contains null bytes (binary file)")
+                    return False
+                chardet.detect(chunk)
+            return True
+        except Exception as e:
+            logger.debug(f"Skipping {filepath}: failed to check text file - {str(e)}")
+            return False
+
+    @staticmethod
+    def parse_file(filepath):
+        """Parse file content with encoding detection, truncating to 1200 lines"""
+        try:
+            with open(filepath, 'rb') as f:
+                raw_data = f.read()
+                encoding = chardet.detect(raw_data)['encoding']
+            
+            if encoding is None:
+                encoding = 'utf-8'
+                
+            with open(filepath, 'r', encoding=encoding, errors='replace') as f:
+                content = f.read()
+            
+            # Truncate content to 1200 lines for file_contents
+            content_lines = content.splitlines()
+            if len(content_lines) > 1200:
+                truncated_content = '\n'.join(content_lines[:1200]) + '\n[Truncated at 1200 lines]'
+                logger.debug(f"Truncated {filepath} to 1200 lines (original: {len(content_lines)} lines)")
+            else:
+                truncated_content = content
+                
+            if any(filepath.endswith(ext) for ext in CONFIG["priority_extensions"]):
+                try:
+                    if filepath.endswith(('.yml', '.yaml')):
+                        structured = yaml.safe_load(content)  # Use full content for parsing
+                        return {"content": structured, "file_contents": truncated_content, "type": "yaml"}
+                    elif 'Dockerfile' in os.path.basename(filepath) or filepath.endswith('.dockerfile'):
+                        return {"content": content, "file_contents": truncated_content, "type": "dockerfile"}
+                except Exception as e:
+                    logger.warning(f"Error parsing {filepath}: {str(e)}")
+                    return {"content": content, "file_contents": truncated_content, "type": "text"}
+            
+            return {"content": content, "file_contents": truncated_content, "type": "text"}
+        except Exception as e:
+            logger.warning(f"Failed to parse {filepath}: {str(e)}")
+            return None
+        
+    @staticmethod
+    def build_graph_for_compose_file(compose_file, root_dir):
+        """Build a graph for a single Docker Compose file"""
+        G = nx.DiGraph()
+        compose_dir = os.path.dirname(compose_file)
+        compose_rel_path = os.path.relpath(compose_file, root_dir).replace(os.sep, '/')
+        if compose_rel_path.startswith('./'):
+            compose_rel_path = compose_rel_path[2:]
+        
+        # Set root node as the directory containing the Compose file
+        root_node = os.path.basename(os.path.normpath(compose_dir)) if compose_dir else os.path.basename(os.path.normpath(root_dir))
+        G.add_node(
+            root_node,
+            type="directory",
+            source=root_node,
+            directory='',
+            origin="repo"
+        )
+        logger.info(f"Added root node for {compose_file}: {root_node}")
+
+        # Parse the Compose file
+        parsed = GraphRepo.parse_file(compose_file)
+        if not parsed or parsed["type"] != "yaml" or not isinstance(parsed["content"], dict):
+            logger.error(f"Failed to parse {compose_file} as valid YAML")
+            return G, compose_rel_path
+
+        # Add Compose file node
+        compose_node_id = f"file::{compose_rel_path}"
+        G.add_node(
+            compose_node_id,
+            type="docker_compose",
+            source=compose_rel_path,
+            file_contents=parsed["file_contents"],
+            directory=root_node,
+            origin="repo"
+        )
+        G.add_edge(root_node, compose_node_id, relationship="has_file")
+        logger.debug(f"Added Compose file node: {compose_node_id}")
+
+        # Process services
+        services = parsed["content"].get('services', {})
+        service_dockerfiles = {}
+        for service_name, service_config in services.items():
+            # Add service node
+            service_node_id = f"service::{service_name}"
+            G.add_node(
+                service_node_id,
+                type="service",
+                source=compose_rel_path,
+                config=yaml.dump(service_config),
+                origin="docker-compose"
+            )
+            logger.info(f"Added service node: {service_node_id}")
+
+            # Check for service directory
+            service_dir = os.path.join(compose_dir, service_name)
+            service_dir_rel = os.path.relpath(service_dir, root_dir).replace(os.sep, '/') if os.path.isdir(service_dir) else None
+            if service_dir_rel and not service_dir_rel.startswith('.'):
+                if service_dir_rel == '.':
+                    service_dir_rel = root_node
+                G.add_node(
+                    service_dir_rel,
+                    type="directory",
+                    source=service_dir_rel,
+                    directory=os.path.dirname(service_dir_rel).replace(os.sep, '/') or root_node,
+                    origin="repo"
+                )
+                G.add_edge(root_node, service_dir_rel, relationship="has_directory")
+                G.add_edge(service_node_id, service_dir_rel, relationship="service_owns")
+                logger.info(f"Linked service {service_name} to directory {service_dir_rel}")
+
+            # Check for Dockerfile
+            if 'build' in service_config:
+                build = service_config['build']
+                dockerfile_path = None
+                if isinstance(build, str):
+                    dockerfile_path = os.path.normpath(os.path.join(compose_dir, build, 'Dockerfile'))
+                elif isinstance(build, dict):
+                    dockerfile_path = os.path.normpath(os.path.join(compose_dir, build.get('context', '.'), build.get('dockerfile', 'Dockerfile')))
+                if dockerfile_path:
+                    if os.path.exists(dockerfile_path):
+                        dockerfile_rel = os.path.relpath(dockerfile_path, root_dir).replace(os.sep, '/')
+                        if dockerfile_rel.startswith('./'):
+                            dockerfile_rel = dockerfile_rel[2:]
+                        service_dockerfiles[service_name] = dockerfile_rel
+                        logger.debug(f"Found Dockerfile for service {service_name}: {dockerfile_rel}")
+                    else:
+                        logger.warning(f"Dockerfile not found for service {service_name}: {dockerfile_path}")
+
+        # Traverse directories under the Compose file's directory
+        for root, dirs, files in os.walk(compose_dir):
+            rel_dir = os.path.relpath(root, root_dir).replace(os.sep, '/')
+            if rel_dir == '.':
+                rel_dir = root_node
+            if any(part.startswith('.') for part in Path(root).parts) or rel_dir.startswith('docker_graph_output'):
+                logger.debug(f"Skipping directory {rel_dir}: hidden or output directory")
+                continue
+
+            G.add_node(
+                rel_dir,
+                type="directory",
+                source=rel_dir,
+                directory=os.path.dirname(rel_dir).replace(os.sep, '/') or root_node if rel_dir != root_node else '',
+                origin="repo"
+            )
+            parent_dir = os.path.dirname(rel_dir).replace(os.sep, '/') or root_node if rel_dir != root_node else ''
+            if parent_dir != rel_dir and parent_dir:
+                G.add_edge(parent_dir, rel_dir, relationship="has_directory")
+                logger.debug(f"Added edge: {parent_dir} -> {rel_dir} (has_directory)")
+
+            for file in files:
+                filepath = os.path.join(root, file)
+                rel_path = os.path.relpath(filepath, root_dir).replace(os.sep, '/')
+                if rel_path.startswith('./'):
+                    rel_path = rel_path[2:]
+                if file.startswith('.') or not GraphRepo.is_text_file(filepath) or rel_dir.startswith('docker_graph_output'):
+                    logger.debug(f"Skipping file {rel_path}: hidden, non-text, or in output directory")
+                    continue
+                parsed = GraphRepo.parse_file(filepath)
+                if parsed:
+                    node_id = f"file::{rel_path}"
+                    node_type = parsed["type"]
+                    if file in ('docker-compose.yml', 'docker-compose.yaml', 'compose.yaml'):
+                        node_type = "docker_compose"
+                    # Mark Dockerfile as referenced or not
+                    is_referenced = rel_path in service_dockerfiles.values()
+                    G.add_node(
+                        node_id,
+                        type=node_type,
+                        source=rel_path,
+                        file_contents=parsed["file_contents"],
+                        directory=rel_dir,
+                        origin="repo",
+                        referenced=is_referenced
+                    )
+                    G.add_edge(rel_dir, node_id, relationship="has_file")
+                    logger.debug(f"Added file node {node_id} (referenced={is_referenced})")
+
+                    if parsed["type"] == "dockerfile":
+                        dockerfile_node_id = node_id
+                        G.add_edge(compose_node_id, dockerfile_node_id, relationship="references_dockerfile")
+                        logger.debug(f"Linked {compose_node_id} to {dockerfile_node_id}")
+                        for service_name, dockerfile_rel in service_dockerfiles.items():
+                            if dockerfile_rel == rel_path:
+                                service_node = f"service::{service_name}"
+                                G.add_edge(service_node, dockerfile_node_id, relationship="service_owns")
+                                logger.debug(f"Linked {service_node} to {dockerfile_node_id}")
+
+        return G, compose_rel_path
+
+    @staticmethod
+    def build_repository_graphs(root_dir):
+        """Build a separate graph for each Docker Compose file in the root_dir"""
+        graphs = []
+        compose_files = []
+        for root, _, files in os.walk(root_dir):
+            for file in files:
+                if file in ('docker-compose.yml', 'docker-compose.yaml', 'compose.yaml'):
+                    compose_files.append(os.path.join(root, file))
+        
+        if not compose_files:
+            logger.error(f"No Docker Compose files found in {root_dir}")
+            return []
+
+        for compose_file in compose_files:
+            logger.info(f"Processing Compose file: {compose_file}")
+            graph, compose_rel_path = GraphRepo.build_graph_for_compose_file(compose_file, root_dir)
+            if graph:
+                graphs.append((graph, compose_rel_path))
+                logger.info(f"Built graph for {compose_rel_path} with {graph.number_of_nodes()} nodes")
+
+        return graphs
+    
+    def build_repo_indices(self):
+         # Parse repositories
+        all_graphs = []
+        
+        for repo_dir in CONFIG["repo_dirs"]:
+            print(f"Parsing repository: {repo_dir}")
+            abs_repo_dir = os.path.abspath(repo_dir)
+            logger.info(f"Building graphs for repository: {abs_repo_dir}")
+            graphs = GraphRepo.build_repository_graphs(abs_repo_dir)
+            all_graphs.extend(graphs)
+            
+        model = SentenceTransformer(CONFIG["embedding_model"])
+        # Embed nodes and build FAISS index
+        embeddings, metadata = GraphRepo.embed_graph_nodes(all_graphs, model)
+        faiss_index, metadata = GraphRepo.build_faiss_index(embeddings, metadata)
+        
+        # Save FAISS index and metadata
+        repo_index_path = os.path.join(CONFIG["storage_dir"], "repo_index.bin")
+        repo_metadata_path = os.path.join(CONFIG["storage_dir"], "repo_metadata.pkl")
+        graph_path = os.path.join(CONFIG["storage_dir"], "repo_graphs.pkl")
+        indices_artifacts ={"model": model, "faiss_index": faiss_index, "metadata": metadata, "graphs": all_graphs}
+        self.indices_artifacts = indices_artifacts
+        GraphRepo.save_all_artifacts(indices_artifacts, CONFIG["storage_dir"])
+        logger.info(f"Saved FAISS index to {repo_index_path} and metadata to {repo_metadata_path}")
+        return indices_artifacts
+    
+    @staticmethod
+    def save_all_artifacts(artifacts, storage_dir):
+        """Save all artifacts (graphs, model, FAISS index, metadata) to a single directory"""
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Save graphs
+        graphs_path = os.path.join(storage_dir, "repo_all_graphs.pkl")
+        with open(graphs_path, 'wb') as f:
+            pickle.dump(artifacts["graphs"], f)
+        logger.info(f"Saved all graphs to {graphs_path}")
+        
+        # Save FAISS index
+        index_path = os.path.join(storage_dir, "repo_faiss_index.bin")
+        faiss.write_index(artifacts["faiss_index"], index_path)
+        logger.info(f"Saved FAISS index to {index_path}")
+        
+        # Save metadata
+        metadata_path = os.path.join(storage_dir, "repo_metadata.pkl")
+        with open(metadata_path, 'wb') as f:
+            pickle.dump(artifacts["metadata"], f)
+        logger.info(f"Saved metadata to {metadata_path}")
+        
+        # Save model (serializing SentenceTransformer)
+        model_path = os.path.join(storage_dir, "repo_model.pkl")
+        with open(model_path, 'wb') as f:
+            pickle.dump(artifacts["model"], f)
+        logger.info(f"Saved model to {model_path}")
+        
+    @staticmethod
+    def print_graph(graph, compose_file):
+        """Print the graph's nodes and edges for a specific Compose file"""
+        print(f"\n=== Graph for {compose_file} ===")
+        print(f"Total Nodes: {graph.number_of_nodes()}")
+        print(f"Total Edges: {graph.number_of_edges()}")
+        
+        print("\n--- Nodes ---")
+        for node in sorted(graph.nodes):
+            attrs = graph.nodes[node]
+            node_type = attrs.get('type', 'unknown')
+            source = attrs.get('source', 'unknown')
+            print(f"Node: {node}")
+            print(f"  Type: {node_type}")
+            print(f"  Source: {source}")
+            if node_type == "directory":
+                print(f"  Directory: {attrs.get('directory', '')}")
+            elif node_type in ("service", "docker_compose", "dockerfile", "text", "yaml"):
+                print(f"  Directory: {attrs.get('directory', '')}")
+                if 'file_contents' in attrs:
+                    content_preview = attrs['file_contents'][:100].replace('\n', ' ') + ('...' if len(attrs['file_contents']) > 100 else '')
+                    print(f"  File Contents (preview): {content_preview}")
+                if node_type == "service":
+                    config = attrs.get('config', '')
+                    config_preview = config[:100].replace('\n', ' ') + ('...' if len(config) > 100 else '')
+                    print(f"  Config: {config_preview}")
+                if node_type == "dockerfile":
+                    print(f"  Referenced: {attrs.get('referenced', False)}")
+            print(f"  Origin: {attrs.get('origin', 'unknown')}")
+            print()
+
+        print("\n--- Edges ---")
+        for edge in sorted(graph.edges(data=True), key=lambda x: (x[0], x[1])):
+            source, target, attrs = edge
+            relationship = attrs.get('relationship', 'unknown')
+            print(f"Edge: {source} -> {target}")
+            print(f"  Relationship: {relationship}")
+            print()
+
+    @staticmethod
+    def embed_graph_nodes(graphs, model):
+        """Generate embeddings for nodes across all graphs"""
+        node_texts = []
+        node_metadata = []
+        
+        for graph, compose_file in graphs:
+            # Extract repo and project names (e.g., 'awesome-compose', 'angular')
+            repo_name = compose_file.split('/')[0].lower()
+            project_name = os.path.dirname(compose_file).split('/')[-1].lower() or repo_name
+            prefix = f"{repo_name} {project_name}"
+            for node in graph.nodes:
+                attrs = graph.nodes[node]
+                node_type = attrs.get('type', 'unknown')
+                
+                if node_type == "directory":
+                    text = f"Directory: {attrs['source']}"
+                elif node_type == "service":
+                    text = f"Service {node.split('::')[1]} from {attrs['source']}: {attrs['config']}"
+                elif node_type in ("docker_compose", "dockerfile", "text", "yaml"):
+                    text = attrs['file_contents']
+                else:
+                    logger.warning(f"Skipping node {node}: unknown type {node_type}")
+                    continue
+                
+                # Prepend repo and project names to boost relevance
+                text = f"{prefix} {text}"
+                node_texts.append(text)
+                node_metadata.append({
+                    'node_id': node,
+                    'type': node_type,
+                    'source': attrs['source'],
+                    'directory': attrs.get('directory', ''),
+                    'origin': attrs.get('origin', 'unknown'),
+                    'compose_file': compose_file
+                })
+        
+        logger.info(f"Embedding {len(node_texts)} nodes across {len(graphs)} graphs")
+        embeddings = model.encode(node_texts, convert_to_numpy=True, show_progress_bar=True)
+        return embeddings, node_metadata
+
+    @classmethod
+    def load_all_artifacts(self, storage_dir):
+        """Load all artifacts (graphs, model, FAISS index, metadata) from a directory"""
+        artifacts = {}
+        
+        # Load graphs
+        graphs_path = os.path.join(storage_dir, "repo_all_graphs.pkl")
+        if os.path.exists(graphs_path):
+            with open(graphs_path, 'rb') as f:
+                artifacts["graphs"] = pickle.load(f)
+            logger.info(f"Loaded graphs from {graphs_path}")
+        else:
+            logger.error(f"Graphs file not found: {graphs_path}")
+            artifacts["graphs"] = []
+        
+        # Load FAISS index
+        index_path = os.path.join(storage_dir, "repo_faiss_index.bin")
+        if os.path.exists(index_path):
+            artifacts["faiss_index"] = faiss.read_index(index_path)
+            logger.info(f"Loaded FAISS index from {index_path}")
+        else:
+            logger.error(f"FAISS index file not found: {index_path}")
+            artifacts["faiss_index"] = None
+        
+        # Load metadata
+        metadata_path = os.path.join(storage_dir, "repo_metadata.pkl")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'rb') as f:
+                artifacts["metadata"] = pickle.load(f)
+            logger.info(f"Loaded metadata from {metadata_path}")
+        else:
+            logger.error(f"Metadata file not found: {metadata_path}")
+            artifacts["metadata"] = []
+        
+        # Load model
+        model_path = os.path.join(storage_dir, "repo_model.pkl")
+        if os.path.exists(model_path):
+            with open(model_path, 'rb') as f:
+                artifacts["model"] = pickle.load(f)
+            logger.info(f"Loaded model from {model_path}")
+        else:
+            logger.info(f"Model file not found: {model_path}, initializing new model")
+            artifacts["model"] = SentenceTransformer(CONFIG["embedding_model"])
+        
+        self.indices_artifacts = artifacts
+        return artifacts
+    
+    @staticmethod
+    def build_faiss_index(embeddings, metadata, dimension=384):
+        """Build a FAISS index for the embeddings"""
+        index = faiss.IndexFlatIP(dimension)
+        faiss.normalize_L2(embeddings)
+        index.add(embeddings)
+        logger.info(f"FAISS index built with {index.ntotal} vectors")
+        return index, metadata
+
+    @staticmethod
+    def find_closest_graph(results, graphs):
+        """Find the graph with the highest average similarity score"""
+        # Compute average similarity per graph
+        graph_scores = defaultdict(list)
+        for result in results:
+            compose_file = result['compose_file']
+            graph_scores[compose_file].append(result['similarity'])
+        
+        # Find graph with highest average similarity
+        max_avg_score = -1
+        closest_graph = None
+        closest_compose_file = None
+        for compose_file, scores in graph_scores.items():
+            avg_score = sum(scores) / len(scores)
+            logger.info(f"Graph {compose_file}: Average similarity = {avg_score:.4f}")
+            if avg_score > max_avg_score:
+                max_avg_score = avg_score
+                closest_compose_file = compose_file
+        
+        # Find the graph corresponding to the closest compose file
+        for graph, compose_file in graphs:
+            if compose_file == closest_compose_file:
+                closest_graph = graph
+                break
+        
+        return closest_graph, closest_compose_file
+
+    @staticmethod
+    def print_graph_nodes_content(graph, compose_file):
+        """Generate a context string for LLM with file name and content for each node"""
+        context = f"\n=== Nodes Content for Graph: {compose_file} ===\n"
+        for node in sorted(graph.nodes):
+            attrs = graph.nodes[node]
+            node_type = attrs.get('type', 'unknown')
+            source = attrs.get('source', 'unknown')
+            
+            context += f"\nNode: {node}\n"
+            context += f"  Type: {node_type}\n"
+            context += f"  File Name: {source}\n"
+            
+            if node_type == "directory":
+                context += f"  Content: Directory: {source}\n"
+            elif node_type == "service":
+                config_content = attrs.get('config', '')
+                context += f"  Content:\n{config_content}\n"
+            elif node_type in ("docker_compose", "dockerfile", "text", "yaml"):
+                file_content = attrs.get('file_contents', '')
+                context += f"  Content:\n{file_content}\n"
+            else:
+                context += f"  Content: [No content available]\n"
+            context += "-" * 80 + "\n"
+        
+        return context
+
+    @classmethod
+    def query_faiss_index(self, query, k=10):
+        """Query the FAISS index and return top-k results, with optional target file scores"""
+        model = self.indices_artifacts['model']
+        index = self.indices_artifacts['faiss_index']
+        metadata = self.indices_artifacts['metadata']
+        query_embedding = model.encode([query], convert_to_numpy=True)
+        faiss.normalize_L2(query_embedding)
+        
+        fetch_k = max(k * 5, 50)
+        distances, indices = index.search(query_embedding, fetch_k)
+        
+        results = []
+        for dist, idx in zip(distances[0], indices[0]):
+            result = {
+                'node_id': metadata[idx]['node_id'],
+                'type': metadata[idx]['type'],
+                'source': metadata[idx]['source'],
+                'directory': metadata[idx]['directory'],
+                'origin': metadata[idx]['origin'],
+                'compose_file': metadata[idx]['compose_file'],
+                'similarity': float(dist)
+            }
+            results.append(result)
+        
+        # Log target compose file results
+        for result in sorted(results, key=lambda x: x['similarity'], reverse=True):
+            print(f"Node: {result['node_id']}")
+            print(f"  Type: {result['type']}")
+            print(f"  Source: {result['source']}")
+            print(f"  Directory: {result['directory']}")
+            print(f"  Similarity: {result['similarity']:.4f}")
+            print()
+        
+        return results[:k]
+
+    def get_context_string_from_examples(self, results):
+        # Find closest graph and generate context string
+        closest_graph, closest_compose_file = GraphRepo.find_closest_graph(results, self.indices_artifacts['graphs'])
+        if closest_graph:
+            print(f"\nClosest Graph: {closest_compose_file}")
+            context_string = GraphRepo.print_graph_nodes_content(closest_graph, closest_compose_file)
+            return context_string
+        else:
+            return "\nNo matching example found."
+
 
 ###########################################
 # DOCUMENTATION SCRAPER COMPONENT
@@ -534,28 +897,19 @@ class UnifiedVectorIndex:
     def __init__(self):
         self.embedder = SentenceTransformer(CONFIG["embedding_model"])
         # One index per source type for weighted retrieval
-        self.repo_index = None
+        self.repo_obj = None
         self.docs_index = None 
         self.so_index = None
         # Metadata for each index
-        self.repo_metadata = []
         self.docs_metadata = []
         self.so_metadata = []
     
-    def build(self, repo_chunks, docs_chunks, so_chunks):
+    def build(self, graph_obj, docs_chunks, so_chunks):
         """Build separate indices for each source"""
         print("Building unified vector index...")
-        
-        # Process repository chunks
-        if repo_chunks:
-            print(f"Adding {len(repo_chunks)} repository chunks to index")
-            repo_embeddings = self.embedder.encode([c["content"] for c in repo_chunks])
-            dimension = repo_embeddings.shape[1]
-            self.repo_index = faiss.IndexFlatL2(dimension)
-            self.repo_index.add(np.array(repo_embeddings).astype('float32'))
-            self.repo_metadata = repo_chunks
-        
         # Process documentation chunks
+        self.repo_obj = graph_obj
+        
         if docs_chunks:
             print(f"Adding {len(docs_chunks)} documentation chunks to index")
             docs_embeddings = self.embedder.encode([c["content"] for c in docs_chunks])
@@ -576,19 +930,9 @@ class UnifiedVectorIndex:
         # Save indices and metadata
         Path(CONFIG["storage_dir"]).mkdir(exist_ok=True)
         self._save_index_and_metadata()
-        
-        total_chunks = len(repo_chunks) + len(docs_chunks) + len(so_chunks)
-        print(f"Unified index built with {total_chunks} total chunks")
     
     def _save_index_and_metadata(self):
         """Save all indices and metadata to disk"""
-        # Repository index
-        if self.repo_index:
-            faiss.write_index(self.repo_index, 
-                             os.path.join(CONFIG["storage_dir"], "repo_index.faiss"))
-            with open(os.path.join(CONFIG["storage_dir"], "repo_metadata.pkl"), 'wb') as f:
-                pickle.dump(self.repo_metadata, f)
-                
         # Documentation index
         if self.docs_index:
             faiss.write_index(self.docs_index, 
@@ -608,15 +952,7 @@ class UnifiedVectorIndex:
         """Load all indices from disk"""
         vi = cls()
         
-        # Load repository index
-        repo_index_path = os.path.join(CONFIG["storage_dir"], "repo_index.faiss")
-        repo_metadata_path = os.path.join(CONFIG["storage_dir"], "repo_metadata.pkl")
-        if os.path.exists(repo_index_path) and os.path.exists(repo_metadata_path):
-            print("Loading repository index...")
-            vi.repo_index = faiss.read_index(repo_index_path)
-            with open(repo_metadata_path, 'rb') as f:
-                vi.repo_metadata = pickle.load(f)
-            print(f"Loaded repository index with {len(vi.repo_metadata)} chunks")
+        vi.repo_obj.load_all_artifacts(CONFIG["storage_dir"])
         
         # Load documentation index
         docs_index_path = os.path.join(CONFIG["storage_dir"], "docs_index.faiss")
@@ -640,19 +976,10 @@ class UnifiedVectorIndex:
             
         return vi
     
-    def search_repositories(self, query_embedding, top_k):
+    def search_repositories(self, query, top_k):
         """Search repository index"""
-        if self.repo_index:
-            distances, indices = self.repo_index.search(
-                np.array([query_embedding]).astype('float32'), top_k
-            )
-            results = [
-                {"chunk": self.repo_metadata[i], "distance": distances[0][idx]}
-                for idx, i in enumerate(indices[0])
-                if i < len(self.repo_metadata)  # Ensure index is valid
-            ]
-            return results
-        return []
+        results = self.repo_obj.query(query, top_k)
+        return self.repo_obj.get_context_string_from_examples(results)
     
     def search_documentation(self, query_embedding, top_k):
         """Search documentation index"""
@@ -688,13 +1015,9 @@ class UnifiedVectorIndex:
         query_embedding = self.embedder.encode(query)
         
         # Get results from each source
-        repo_results = self.search_repositories(query_embedding, top_k_per_source)
+        repo_context = self.search_repositories(query, top_k_per_source)
         docs_results = self.search_documentation(query_embedding, top_k_per_source)
         so_results = self.search_stackoverflow(query_embedding, top_k_per_source)
-        
-        # Apply weights to distances
-        for result in repo_results:
-            result["weighted_distance"] = result["distance"] / CONFIG["source_weights"]["repo"]
             
         for result in docs_results:
             result["weighted_distance"] = result["distance"] / CONFIG["source_weights"]["docs"]
@@ -703,11 +1026,11 @@ class UnifiedVectorIndex:
             result["weighted_distance"] = result["distance"] / CONFIG["source_weights"]["stackoverflow"]
         
         # Combine and sort by weighted distance
-        combined_results = repo_results + docs_results + so_results
+        combined_results = docs_results + so_results
         combined_results.sort(key=lambda x: x["weighted_distance"])
         
         # Return only the best results up to the limit
-        return combined_results[:CONFIG["overall_top_k"]]
+        return combined_results[:CONFIG["overall_top_k"]], repo_context
 
 ###########################################
 # UNIFIED RAG SYSTEM
@@ -723,9 +1046,9 @@ class DockerComposeUnifiedRAG:
         """Execute query with weighted multi-source retrieval"""
         # Get weighted results from all sources
         try:
-            results = self.vector_index.weighted_search(question)
+            results, repo_context = self.vector_index.weighted_search(question)
             
-            if not results:
+            if not results or not repo_context:
                 return {
                     "context": "No relevant context information found." + 
                                " Try rephrasing your question or checking"  +
@@ -748,16 +1071,14 @@ class DockerComposeUnifiedRAG:
             # Build context string
             context_blocks = []
             
+            repo_context = f"\n\n EXAMPLE: \n {repo_context}"
+            context_blocks.append(repo_context)
+            
             # Add documentation context first (if available)
             if grouped_chunks["docs"]:
                 docs_context = "\n\n".join([f"DOCUMENTATION: {chunk['content']}" for chunk in grouped_chunks["docs"]])
                 context_blocks.append(docs_context)
-            
-            # Add repository examples
-            if grouped_chunks["repo"]:
-                repo_context = "\n\n".join([f"EXAMPLE: {chunk['content']}" for chunk in grouped_chunks["repo"]])
-                context_blocks.append(repo_context)
-            
+                
             # Add Stack Overflow content
             if grouped_chunks["stackoverflow"]:
                 so_context = "\n\n".join([f"COMMUNITY: {chunk['content']}" for chunk in grouped_chunks["stackoverflow"]])
@@ -770,7 +1091,7 @@ class DockerComposeUnifiedRAG:
             for result in results:
                 chunk = result["chunk"]
                 source_info = {
-                    "content": chunk["content"][:150] + "..." if len(chunk["content"]) > 150 else chunk["content"],
+                    "content": chunk["content"][:10000] + "..." if len(chunk["content"]) > 10000 else chunk["content"],
                     "metadata": chunk["metadata"]
                 }
                 sources.append(source_info)
@@ -797,14 +1118,11 @@ def build_indices():
     # Create storage directory
     Path(CONFIG["storage_dir"]).mkdir(exist_ok=True)
     
-    # Parse repositories
-    repo_chunks = []
-    for repo_dir in CONFIG["repo_dirs"]:
-        print(f"Parsing repository: {repo_dir}")
-        file_data = parse_repository(repo_dir)
-        chunks = chunk_repository_data(file_data)
-        repo_chunks.extend(chunks)
-    
+    # get repository examples
+    print("Building repository examples...")
+    g = GraphRepo()
+    _ = g.build_repo_indices()
+   
     # Scrape documentation
     print("Scraping Docker Compose documentation...")
     docs_scraper = DockerDocsScraper()
@@ -820,14 +1138,17 @@ def build_indices():
     
     # Build unified index
     vector_index = UnifiedVectorIndex()
-    vector_index.build(repo_chunks, docs_chunks, so_chunks)
+    vector_index.build(g, docs_chunks, so_chunks)
     
     print("All indices built successfully!")
 
 def initialize_rag():
     # Check if indices exist
     indices_exist = all([
-        os.path.exists(os.path.join(CONFIG["storage_dir"], "repo_index.faiss")),
+        os.path.exists(os.path.join(CONFIG["storage_dir"], "repo_faiss_index.bin")),
+        os.path.exists(os.path.join(CONFIG["storage_dir"], "repo_metadata.pkl")),
+        os.path.exists(os.path.join(CONFIG["storage_dir"], "repo_model.pkl")),
+        os.path.exists(os.path.join(CONFIG["storage_dir"], "repo_all_graphs.pkl")),
         os.path.exists(os.path.join(CONFIG["storage_dir"], "docs_index.faiss")),
         os.path.exists(os.path.join(CONFIG["storage_dir"], "so_index.faiss"))
     ])
@@ -842,3 +1163,6 @@ def get_context(question):
     # Initialize RAG system
     rag_system = DockerComposeUnifiedRAG()
     return rag_system.query(question)
+
+initialize_rag()
+get_context("How to use Docker Compose with flask?")

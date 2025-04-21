@@ -33,7 +33,6 @@ CONFIG = {
     # Retrieval settings
     "overall_top_k": 7,  # Total results to retrieve
     "source_weights": {
-        "repo": 1.6,    # Weight for repository examples
         "docs": 1.0,    # Weight for official documentation
         "stackoverflow": 0.4  # Weight for Stack Overflow
     }
