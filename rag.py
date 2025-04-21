@@ -1176,5 +1176,6 @@ def get_context(question):
     rag_system = DockerComposeUnifiedRAG()
     return rag_system.query(question)
 
-initialize_rag()
-print(get_context("How to use Docker Compose with flask?"))
+# usage example
+# initialize_rag()
+# print(get_context("How to use Docker Compose with flask?"))
