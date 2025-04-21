@@ -454,6 +454,7 @@ class GraphRepo:
     def find_closest_graph(results, graphs):
         """Find the graph with the highest average similarity score"""
         # Compute average similarity per graph
+        print("Finding closest graph...")
         graph_scores = defaultdict(list)
         for result in results:
             compose_file = result['compose_file']
@@ -531,7 +532,7 @@ class GraphRepo:
             results.append(result)
         
         # Log target compose file results
-        for result in sorted(results, key=lambda x: x['similarity'], reverse=True):
+        for result in sorted(results, key=lambda x: x['similarity'], reverse=True)[:3]:
             print(f"Node: {result['node_id']}")
             print(f"  Type: {result['type']}")
             print(f"  Source: {result['source']}")
@@ -541,15 +542,17 @@ class GraphRepo:
         
         return results[:k]
 
+    @classmethod
     def get_context_string_from_examples(self, results):
         # Find closest graph and generate context string
         closest_graph, closest_compose_file = GraphRepo.find_closest_graph(results, self.indices_artifacts['graphs'])
         if closest_graph:
             print(f"\nClosest Graph: {closest_compose_file}")
             context_string = GraphRepo.print_graph_nodes_content(closest_graph, closest_compose_file)
-            return context_string
+            full_context_results = {"sources": closest_compose_file, "context": context_string}
+            return full_context_results
         else:
-            return "\nNo matching example found."
+            return {"context": "No relevant graph found.", "sources": "No relevant graph found."} 
 
 
 ###########################################
@@ -952,7 +955,9 @@ class UnifiedVectorIndex:
         """Load all indices from disk"""
         vi = cls()
         
-        vi.repo_obj.load_all_artifacts(CONFIG["storage_dir"])
+        g = GraphRepo()
+        g.load_all_artifacts(CONFIG["storage_dir"])
+        vi.repo_obj = g
         
         # Load documentation index
         docs_index_path = os.path.join(CONFIG["storage_dir"], "docs_index.faiss")
@@ -978,8 +983,12 @@ class UnifiedVectorIndex:
     
     def search_repositories(self, query, top_k):
         """Search repository index"""
-        results = self.repo_obj.query(query, top_k)
-        return self.repo_obj.get_context_string_from_examples(results)
+        results = self.repo_obj.query_faiss_index(query, top_k)
+        try:
+            return self.repo_obj.get_context_string_from_examples(results)
+        except Exception as e:
+            print(f"Error generating context string: {str(e)}")
+            return ""
     
     def search_documentation(self, query_embedding, top_k):
         """Search documentation index"""
@@ -1018,7 +1027,8 @@ class UnifiedVectorIndex:
         repo_context = self.search_repositories(query, top_k_per_source)
         docs_results = self.search_documentation(query_embedding, top_k_per_source)
         so_results = self.search_stackoverflow(query_embedding, top_k_per_source)
-            
+        
+        print(f"Found {len(docs_results)} documentation results and {len(so_results)} Stack Overflow results")
         for result in docs_results:
             result["weighted_distance"] = result["distance"] / CONFIG["source_weights"]["docs"]
             
@@ -1046,6 +1056,7 @@ class DockerComposeUnifiedRAG:
         """Execute query with weighted multi-source retrieval"""
         # Get weighted results from all sources
         try:
+            print(f"Querying for: {question}")
             results, repo_context = self.vector_index.weighted_search(question)
             
             if not results or not repo_context:
@@ -1058,7 +1069,6 @@ class DockerComposeUnifiedRAG:
             
             # Group by source type for better context organization
             grouped_chunks = {
-                "repo": [],
                 "docs": [],
                 "stackoverflow": []
             }
@@ -1071,8 +1081,9 @@ class DockerComposeUnifiedRAG:
             # Build context string
             context_blocks = []
             
-            repo_context = f"\n\n EXAMPLE: \n {repo_context}"
-            context_blocks.append(repo_context)
+            repo_context_string = repo_context["context"]
+            full_repo_string = f"\n\n EXISTING EXAMPLE: \n {repo_context_string}"
+            context_blocks.append(full_repo_string)
             
             # Add documentation context first (if available)
             if grouped_chunks["docs"]:
@@ -1095,7 +1106,8 @@ class DockerComposeUnifiedRAG:
                     "metadata": chunk["metadata"]
                 }
                 sources.append(source_info)
-            
+            # add meta data for repo context
+            sources.append({"example": repo_context["sources"]})
             return {
                 "context": full_context,
                 "sources": sources
@@ -1165,4 +1177,4 @@ def get_context(question):
     return rag_system.query(question)
 
 initialize_rag()
-get_context("How to use Docker Compose with flask?")
+print(get_context("How to use Docker Compose with flask?"))
