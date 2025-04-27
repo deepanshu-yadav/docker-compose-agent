@@ -1,4 +1,3 @@
-# Set environment variables before any imports
 import os
 os.environ["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "none"
 
@@ -18,10 +17,6 @@ import asyncio
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     
-# Define constants
-MAIN_WORKSPACE_DIR = os.path.join(os.getcwd(), "workspaces")
-DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY")
-
 # Now import streamlit and other non-torch libraries
 import streamlit as st
 from langchain_ollama import ChatOllama
@@ -41,16 +36,14 @@ from openai import OpenAI
 from prompts import  construct_full_prompt, SYSTEM_PROMPT
 from helpers import *
 
-# Import the rag module last
-from rag import initialize_rag, get_context
+from configs import *
+from graph import ExecutionEngine
 
-print("Loading/ Creating the vector database...")
-initialize_rag()
-print("The vector database is successfully loaded/ created.")
+EXECUTION_DIR = ""
 
 # Page config
 st.set_page_config(
-    page_title="DeepSeek Devops Agent",
+    page_title="Docker Compose Agent",
     page_icon="🧠",
     layout="wide"
 )
@@ -148,7 +141,7 @@ if 'chats' not in st.session_state:
     new_chat_id = str(uuid.uuid4())
     st.session_state.chats = {
         new_chat_id: {
-            'messages': [{"role": "ai", "content": "Hi! I'm a Devops Agent. How can I help you deploy today? 💻"}],
+            'messages': [{"role": "ai", "content": "Hi! I'm a Docker Compose Agent. How can I help you deploy today? 💻"}],
             'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'title': "New Chat"
         }
@@ -182,7 +175,7 @@ def get_chat_title(messages):
             return msg['content'][:30] + "..." if len(msg['content']) > 30 else msg['content']
     return "New Chat"
 
-# Initialize session state variables for Docker Compose
+# Initialize session state variables
 if 'output_stdout' not in st.session_state:
     st.session_state.output_stdout = ""
 if 'output_stderr' not in st.session_state:
@@ -191,6 +184,10 @@ if 'process' not in st.session_state:
     st.session_state.process = None
 if "directory" not in st.session_state:
     st.session_state.directory = "first_project"
+if 'new_message' not in st.session_state:
+    st.session_state.new_message = False
+if 'execution_complete' not in st.session_state:
+    st.session_state.execution_complete = False
 
 # Thread-safe flag to control the while loop
 stop_event = threading.Event()
@@ -384,27 +381,29 @@ with st.expander("Docker Compose Manager", expanded=True):
         value=st.session_state.directory,
         key="docker_dir_input"
     )
-    workspace_dir = os.path.join(MAIN_WORKSPACE_DIR, st.session_state.directory)
+    
     project_name = st.session_state.directory
     # Buttons for docker-compose up and down
     col1, col2 = st.columns(2)
      # Placeholder for displaying the output
     stdout_placeholder = st.empty()
     stderr_placeholder = st.empty()
-
+    EXECUTION_DIR = os.path.join(SAVE_DIR, st.session_state.directory)
+    RESPONSE_FILE = os.path.join(SAVE_DIR, st.session_state.directory, CONFIG["response_filename"])
+    
     with col1:
         if st.button("Start Docker-Compose"):
-            if os.path.exists(workspace_dir) and os.path.exists(os.path.join(workspace_dir, "docker-compose.yml")):
+            if os.path.exists(EXECUTION_DIR) and os.path.exists(os.path.join(EXECUTION_DIR, "docker-compose.yml")):
                 stop_event.clear()  # Reset the stop event
-                run_docker_compose_wrapper(run_docker_compose_up, workspace_dir,
+                run_docker_compose_wrapper(run_docker_compose_up, EXECUTION_DIR,
                                            project_name, stdout_placeholder, stderr_placeholder)
             else:
                 st.error("Invalid workspace directory or docker-compose.yml not found.")
     with col2:
         if st.button("Stop Docker-Compose"):
-            if os.path.exists(workspace_dir) and os.path.exists(os.path.join(workspace_dir, "docker-compose.yml")):
+            if os.path.exists(EXECUTION_DIR) and os.path.exists(os.path.join(EXECUTION_DIR, "docker-compose.yml")):
                 stop_event.set()  # Signal the while loop to stop
-                run_docker_compose_wrapper(run_docker_compose_down, workspace_dir, project_name,
+                run_docker_compose_wrapper(run_docker_compose_down, EXECUTION_DIR, project_name,
                                            stdout_placeholder, stderr_placeholder)
             else:
                 st.error("Invalid workspace directory or docker-compose.yml not found.")
@@ -415,12 +414,20 @@ with st.sidebar:
     
     # Configuration section
     st.header("⚙️ Configuration")
-    selected_model = st.selectbox(
-        "Choose Model",
-        ["meta-llama/llama-4-maverick:free", "deepseek/deepseek-r1-zero:free", "deepcoder:14b", "llama3.2:3b", "llama3.2:1b", "gemma3:4b", "gemma3:12b","gemma3:4b","deepseek-r1:32b","deepseek-r1:7b",
-         "deepseek-r1:1.5b", "deepcoder:1.5b"],
-        index=0
-    )
+    online = st.toggle("Use Online Model via openrouter", value=True, key="online_model")
+
+    if online:
+        selected_model = st.selectbox(
+            "Choose Model",
+            CONFIG["online_models"],
+            index=0
+        )
+    else:
+        selected_model = st.selectbox(
+            "Choose Model",
+            CONFIG["offline_models"],
+            index=0
+        )
     
     st.divider()
     
@@ -460,42 +467,10 @@ with st.sidebar:
             switch_chat(chat_id)
     
     st.divider()
-    st.markdown("Built with [Ollama](https://ollama.ai/) | [LangChain](https://python.langchain.com/)")
-
+    
 # Main chat interface
 st.title("AI Devops Agent")
 st.caption("🚀 Your AI Devops expert with deploying superpowers.")
-
-# Initialize LLM engine
-if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
-    # Set up the OpenAI client with the custom API endpoint
-    try:
-        llm_engine = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=DEEPSEEK_FREE_KEY,
-        )
-    except Exception as e:
-        try:
-            llm_engine = ChatOllama(
-            model="llama3.2:3b",
-            base_url="http://localhost:11434",
-            temperature=0
-            )
-        except Exception as e:
-            print(f"API Error: {e}")
-            st.error("API Error: Please check your server connection with ollama")
-            llm_engine = None
-else:
-    try:
-        llm_engine = ChatOllama(
-            model=selected_model,
-            base_url="http://localhost:11434",
-            temperature=0
-        )
-    except Exception as e:
-        print(f"API Error: {e}")
-        st.error("API Error: Please check your server connection with ollama")
-        llm_engine = None
 
 def post_result_text(original_text, file_path):
     full_path =os.path.join(file_path, "docker-compose.yml")
@@ -507,95 +482,101 @@ def post_result_text(original_text, file_path):
         return text
     return original_text + text
 
-# System prompt configuration
-system_prompt = SystemMessagePromptTemplate.from_template(escape_braces(SYSTEM_PROMPT))
+def read_chat_data():
+    try:
+        with open(RESPONSE_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        print("Error reading JSON file. Returning default structure.")
+        return {
+            "status": {"awaiting_response": False, "execution_complete": True},
+            "chats": {st.session_state.current_chat_id: {"messages": []}}
+        }
 
-def generate_ai_response(prompt_chain):
-    if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
-        try:
-            # Convert the prompt chain to a string
-            # Use the OpenAI client to generate a response
-            completion = llm_engine.chat.completions.create(
-                model=selected_model,
-                messages=prompt_chain
-            )
-            # Extract and return the AI's response
-            return completion.choices[0].message.content
-        except Exception as e:
-            print(f"API Error: {e}")
-            return None
-    else:
-        processing_pipeline = prompt_chain | llm_engine | StrOutputParser()
-        return processing_pipeline.invoke({})
-
-def build_prompt_chain():
-    
-    if selected_model in ["deepseek/deepseek-r1-zero:free", "meta-llama/llama-4-maverick:free"]:
-        messages = [{"role": "system", "content":escape_braces(SYSTEM_PROMPT) }]
-        for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
-            msg["content"] = escape_braces(msg["content"])
-            if msg["role"] == "user" and not is_context_already_present(msg["content"]):
-                print("Getting context...")
-                context = get_context(msg["content"])['context']
-                sources = get_context(msg["content"])['sources']
-                msg = {"role": "user", "content": escape_braces(
-                    construct_full_prompt(msg["content"], context, sources))}
-                print("Context retrieved from the vector database")
-            messages.append(msg)
-        # print(f"Messages for debugging {messages}")
-        st.session_state.chats[st.session_state.current_chat_id]['messages'] = messages
-        # Update the chat history in session state
-        return messages
-    else:
-        prompt_sequence = [system_prompt]
-        for msg in st.session_state.chats[st.session_state.current_chat_id]['messages']:
-            msg["content"] = escape_braces(msg["content"])
-            if msg["role"] == "user":
-                if not is_context_already_present(msg["content"]):
-                    print("Getting context...")
-                    context = get_context(msg["content"])['context']
-                    sources = get_context(msg["content"])['sources']
-                    msg["content"] = escape_braces(
-                        construct_full_prompt(msg["content"], context, sources))
-                    print("Context retrieved from the vector database")
-                prompt_sequence.append(HumanMessagePromptTemplate.from_template(msg["content"]))
-            elif msg["role"] == "ai":
-                prompt_sequence.append(AIMessagePromptTemplate.from_template(msg["content"]))
-        # print(f"Messages for debugging {prompt_sequence}")
-        return ChatPromptTemplate.from_messages(prompt_sequence)
+# Add a last_updated timestamp to your session state
+if 'last_updated' not in st.session_state:
+    st.session_state.last_updated = datetime.now()
 
 # Chat container
 chat_container = st.container()
 
-# Display chat messages
+# Display chat messages (outside any conditionals so it always shows)
 with chat_container:
     for message in st.session_state.chats[st.session_state.current_chat_id]['messages']:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+
+# Check for updates in a continuous loop
+if st.session_state.awaiting_response:
+    print("Awaiting response from LLM...")
     
-    # Show processing message if waiting for response
-    if st.session_state.awaiting_response:
-        with st.chat_message("ai"):
-            with st.spinner("🧠 Processing..."):
-                prompt_chain = build_prompt_chain()
-                ai_response = generate_ai_response(prompt_chain)
-                ai_response = escape_braces(ai_response)
-                save_path = os.path.join(MAIN_WORKSPACE_DIR, st.session_state.directory)
-                save_llm_output_to_files(ai_response, save_path)
-                new_ai_response = post_result_text(ai_response, save_path)
-                st.session_state.chats[st.session_state.current_chat_id]['messages'].append(
-                    {"role": "ai", "content": new_ai_response}
-                )
-                st.session_state.awaiting_response = False
-                st.rerun()
+    # Use st.empty() for the spinner so it can be updated
+    spinner = st.empty()
+    with spinner:
+        with st.spinner("Executing the Graph..."):
+            # Check for updates periodically
+            while st.session_state.awaiting_response:
+                llm_response = read_chat_data()
+                
+                if llm_response and "chats" in llm_response and st.session_state.current_chat_id in llm_response["chats"]:
+                    file_messages = llm_response["chats"][st.session_state.current_chat_id]["messages"]
+                    session_messages = st.session_state.chats[st.session_state.current_chat_id]['messages']
+                    
+                    # Check if there are new messages
+                    new_messages = [
+                        msg for msg in file_messages 
+                        if not any(
+                            sm['role'] == msg['role'] and sm['content'] == msg['content'] 
+                            for sm in session_messages
+                        )
+                    ]
+                    
+                    if new_messages:
+                        for msg in new_messages:
+                            session_messages.append({
+                                "role": msg["role"],
+                                "content": msg["content"]
+                            })
+                        st.session_state.last_updated = datetime.now()
+                        st.rerun()  # Force UI update
+                
+                # Check completion status
+                if llm_response.get("status", {}).get("execution_complete", False):
+                    st.session_state.awaiting_response = False
+                    st.session_state.last_updated = datetime.now()
+                    st.rerun()
+                    break
+                
+                time.sleep(1)  # Check every second
 
 # Chat input
 user_query = st.chat_input("Type your devops problem here...")
 
-if user_query:
+if user_query and not st.session_state.awaiting_response:
     # Add user message to log
+    MCP_SERVER = f"http://{MCP_IP}:{MCP_PORT}"
+    engine = ExecutionEngine(
+        directory=EXECUTION_DIR,
+        selected_model=selected_model,
+        model_type="online" if selected_model in CONFIG["online_models"] else "offline",
+        server_url=MCP_SERVER,
+        api_key=DEEPSEEK_FREE_KEY,
+        chat_id=st.session_state.current_chat_id
+    )
+    
     st.session_state.chats[st.session_state.current_chat_id]['messages'].append(
         {"role": "user", "content": user_query}
     )
     st.session_state.awaiting_response = True
+    st.session_state.last_updated = datetime.now()
+    
+    # Run the graph construction in background
+    def run_graph_construction():
+        asyncio.run(engine.construct_graph(question=user_query))
+    
+    # Start background thread
+    thread = threading.Thread(target=run_graph_construction, daemon=True)
+    thread.start()
+    
+    # Force immediate rerun to show the spinner
     st.rerun()

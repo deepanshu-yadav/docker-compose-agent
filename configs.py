@@ -1,7 +1,32 @@
 import os
 
+# Define constants
+MAIN_WORKSPACE_DIR = os.path.join(os.getcwd(), "workspaces")
+DEEPSEEK_FREE_KEY = os.environ.get("DEEPSEEK_FREE_KEY", "")
+# Maximum response length before truncation (adjust based on LLM token limit)
+MAX_RESPONSE_LENGTH = 6000  # Safe for ~8k token limit, leaving room for prompt
+OLLAMA_URL = "http://localhost:11434"  # Ollama server URL
+OPEN_ROUTER_URL = "https://openrouter.ai/api/v1"  # OpenRouter server URL
+
+MCP_HOST="0.0.0.0"
+MCP_PORT=8787
+MCP_IP="localhost"
+
+SAVE_DIR = os.path.join(os.getcwd(), "workspaces", "agent")
+os.makedirs(SAVE_DIR, exist_ok=True)
+
 # Unified Configuration
 CONFIG = {
+    "response_filename": "LLM_RESPONSE.json",
+    # model settings
+    "online_models": ["microsoft/mai-ds-r1:free", 
+                      "meta-llama/llama-4-maverick:free",
+                      "deepseek/deepseek-r1-zero:free",
+                      ],
+    "offline_models": ["llama3.2:3b", "deepcoder:14b", "llama3.2:1b", "gemma3:4b",
+                       "gemma3:12b","gemma3:4b","deepseek-r1:32b","deepseek-r1:7b",
+                       "deepseek-r1:1.5b", "deepcoder:1.5b"
+                       ],
     # General settings
     "storage_dir": "unified_docker_compose_rag",
     "embedding_model": "all-MiniLM-L6-v2",
