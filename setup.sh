@@ -90,7 +90,7 @@ fi
 
 echo "Starting Streamlit application..."
 echo "Press Ctrl+C to stop the application."
-python -m streamlit run app.py
+python start.py
 
 # Clean up Ollama process if script is terminated
 trap 'kill $OLLAMA_PID 2>/dev/null' EXIT

@@ -125,7 +125,7 @@ set DEEPSEEK_FREE_KEY="<your_key>"
 Use
 
 ```
-streamlit run app.py
+python start.py
 ```
 
 It will redirect you to `http://localhost:8501`
