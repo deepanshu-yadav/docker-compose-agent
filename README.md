@@ -2,7 +2,7 @@ This repository tries to solve docker compose deployment problems through an AI 
 
 [![DEMO](images/video.png)](https://www.youtube.com/watch?v=wCm5Dx_D90I&ab_channel=DeepanshuYadav)
 
-![Flow](./images/flow.png)
+![Flow](./images/flow.svg)
 
 # Pre Requisites
 ## Installation of docker 
